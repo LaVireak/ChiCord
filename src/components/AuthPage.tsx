@@ -188,7 +188,11 @@ export default function AuthPage() {
                   Password
                 </label>
                 {isLogin && (
-                  <button type="button" className="text-xs text-teal-400 hover:text-teal-300 transition-colors">
+                  <button 
+                    type="button" 
+                    onClick={() => alert("Password Recovery: Please email admin@chicord.com to request a password reset link.")}
+                    className="text-xs text-teal-400 hover:text-teal-300 transition-colors"
+                  >
                     Forgot password?
                   </button>
                 )}

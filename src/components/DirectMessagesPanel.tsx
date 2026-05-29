@@ -7,7 +7,7 @@ import { Phone, Video, Info } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
 export default function DirectMessagesPanel() {
-  const { activeDmUser, onlineUsers } = useAuraStore();
+  const { activeDmUser, onlineUsers, setActiveTab } = useAuraStore();
   const [user, setUser] = useState<any>(null);
 
   useEffect(() => {
@@ -60,10 +60,18 @@ export default function DirectMessagesPanel() {
 
         {/* Action Buttons */}
         <div className="flex gap-2">
-          <button className="p-2.5 rounded-xl bg-black/40 hover:bg-white/10 text-slate-400 hover:text-white transition-all border border-white/5">
+          <button 
+            onClick={() => setActiveTab('calls')}
+            className="p-2.5 rounded-xl bg-black/40 hover:bg-white/10 text-slate-400 hover:text-white transition-all border border-white/5"
+            title="Start Voice Call"
+          >
             <Phone className="w-4 h-4" />
           </button>
-          <button className="p-2.5 rounded-xl bg-black/40 hover:bg-white/10 text-slate-400 hover:text-white transition-all border border-white/5">
+          <button 
+            onClick={() => setActiveTab('calls')}
+            className="p-2.5 rounded-xl bg-black/40 hover:bg-white/10 text-slate-400 hover:text-white transition-all border border-white/5"
+            title="Start Video Call"
+          >
             <Video className="w-4 h-4" />
           </button>
           <button className="p-2.5 rounded-xl bg-black/40 hover:bg-white/10 text-slate-400 hover:text-white transition-all border border-white/5">

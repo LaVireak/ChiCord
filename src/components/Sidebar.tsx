@@ -138,10 +138,16 @@ export default function Sidebar() {
             )}
 
             <div className="flex items-center justify-between px-2 text-slate-500 text-xs">
-              <button className="flex items-center gap-1.5 hover:text-slate-300 transition-colors">
+              <button 
+                onClick={() => alert("ChiCord Support: If you need help, please contact support@chicord.com or ask in the #general channel.")}
+                className="flex items-center gap-1.5 hover:text-slate-300 transition-colors"
+              >
                 <LifeBuoy className="w-3.5 h-3.5" /> Support
               </button>
-              <button className="flex items-center gap-1.5 hover:text-slate-300 transition-colors">
+              <button 
+                onClick={() => alert("Archive: No archived channels or files are currently stored in this workspace.")}
+                className="flex items-center gap-1.5 hover:text-slate-300 transition-colors"
+              >
                 <Archive className="w-3.5 h-3.5" /> Archive
               </button>
             </div>

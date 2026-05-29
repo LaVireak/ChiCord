@@ -17,6 +17,28 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '@/lib/supabase';
 import { getIconComponent } from './FilesPanel';
 
+const formatRelativeTime = (createdAt: string, timeString?: string) => {
+  if (timeString && timeString.trim()) return timeString;
+  if (!createdAt) return '';
+  
+  const date = new Date(createdAt);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffSecs = Math.floor(diffMs / 1000);
+  const diffMins = Math.floor(diffSecs / 60);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffSecs < 10) return 'Just now';
+  if (diffSecs < 60) return `${diffSecs}s ago`;
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return `${diffDays}d ago`;
+  
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+};
+
 export default function HomePanel() {
   const { setActiveTab, setActiveChannel, activeWorkspace } = useAuraStore();
   const [profile, setProfile] = useState<any>(null);
@@ -269,7 +291,7 @@ export default function HomePanel() {
                       <p className="text-sm text-slate-300">
                         <span className="font-semibold text-white">{log.user?.full_name || 'Someone'}</span> {log.action} <span className="font-medium text-teal-300">{log.target}</span>
                       </p>
-                      <span className="text-xs text-slate-500 mt-0.5 block">{log.time_string}</span>
+                      <span className="text-xs text-slate-500 mt-0.5 block">{formatRelativeTime(log.created_at, log.time_string)}</span>
                     </div>
                   </div>
                 );

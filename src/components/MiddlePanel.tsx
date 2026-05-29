@@ -54,6 +54,16 @@ export default function MiddlePanel() {
           if (!error) {
             setChannels(defaultChannels);
             setActiveChannel(defaultChannels[0].id);
+            
+            // Log activity
+            await supabase.from('activities').insert({
+              workspace_id: activeWorkspace,
+              user_id: session.user.id,
+              action: 'created channel',
+              target: '#general',
+              icon_type: 'Hash',
+              icon_color: 'text-teal-400'
+            });
           }
         }
       }
