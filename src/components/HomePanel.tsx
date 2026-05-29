@@ -31,9 +31,17 @@ export default function HomePanel() {
       }
       
       if (activeWorkspace) {
-        // Fetch channels (limit 3 for quick access)
-        const { data: cData } = await supabase.from('channels').select('*').eq('workspace_id', activeWorkspace).limit(3);
-        if (cData) setChannels(cData);
+        // Fetch channels (limit 6, then deduplicate by name for quick access)
+        const { data: cData } = await supabase.from('channels').select('*').eq('workspace_id', activeWorkspace).limit(6);
+        if (cData) {
+          const seen = new Set<string>();
+          const unique = cData.filter(c => {
+            if (seen.has(c.name)) return false;
+            seen.add(c.name);
+            return true;
+          }).slice(0, 3);
+          setChannels(unique);
+        }
 
         // Fetch events
         const { data: eData } = await supabase.from('events').select('*').eq('workspace_id', activeWorkspace).order('created_at', { ascending: false });

@@ -6,7 +6,6 @@ import { Layers, Rocket, Megaphone, ArrowRight, Plus, X, Folder, Hexagon, Circle
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '@/lib/supabase';
 
-// Map icon strings to actual React components
 const iconMap: Record<string, React.ElementType> = {
   Layers, Rocket, Megaphone, Folder, Hexagon, CircleDashed
 };
@@ -24,9 +23,31 @@ export default function WorkspaceSelector() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newWorkspaceName, setNewWorkspaceName] = useState('');
   const [loadingWorkspaces, setLoadingWorkspaces] = useState(true);
+  const [profile, setProfile] = useState<any>(null);
+  const [invites, setInvites] = useState<any[]>([]);
 
   React.useEffect(() => {
     const fetchWorkspaces = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (session) {
+        const { data: prof } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
+        if (prof) {
+          setProfile(prof);
+        } else {
+          // Profile doesn't exist yet (failed during signup due to RLS), create it now
+          const fallbackName = session.user.user_metadata?.full_name || 'User';
+          const newProf = {
+            id: session.user.id,
+            full_name: fallbackName,
+            avatar_url: `https://ui-avatars.com/api/?name=${encodeURIComponent(fallbackName)}&background=6366f1&color=fff`
+          };
+          await supabase.from('profiles').insert([newProf]);
+          setProfile(newProf);
+        }
+      }
+
+      // We only fetch workspaces where the user is a member (RLS handles this)
       const { data, error } = await supabase.from('workspaces').select('*').order('created_at', { ascending: true });
       if (error) {
         console.error('Error fetching workspaces:', error);
@@ -44,14 +65,72 @@ export default function WorkspaceSelector() {
         }));
         setWorkspaces(mapped);
       }
+      // Fetch pending invites including workspace info
+      const { data: invitesData } = await supabase.from('workspace_invites')
+        .select(`
+          id, 
+          workspace_id,
+          inviter_id,
+          workspaces (name, team, icon_name, color, bg, border)
+        `)
+        .eq('status', 'pending');
+      
+      if (invitesData && invitesData.length > 0) {
+        // Fetch inviter profiles separately (inviter_id FK points to auth.users not public.profiles)
+        const inviterIds = [...new Set(invitesData.map((i: any) => i.inviter_id).filter(Boolean))];
+        const { data: profilesData } = await supabase.from('profiles')
+          .select('id, full_name, avatar_url')
+          .in('id', inviterIds);
+        
+        const profileMap: Record<string, any> = {};
+        (profilesData || []).forEach((p: any) => { profileMap[p.id] = p; });
+        
+        const enriched = invitesData.map((invite: any) => ({
+          ...invite,
+          inviter: profileMap[invite.inviter_id] || null
+        }));
+        setInvites(enriched);
+      }
+
       setLoadingWorkspaces(false);
     };
     fetchWorkspaces();
   }, [setWorkspaces]);
 
+  const handleAcceptInvite = async (inviteId: string, workspaceId: string) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return;
+
+    // Join workspace
+    await supabase.from('workspace_members').insert([{
+      workspace_id: workspaceId,
+      user_id: session.user.id,
+      role: 'member'
+    }]);
+
+    // Update invite status
+    await supabase.from('workspace_invites')
+      .update({ status: 'accepted' })
+      .eq('id', inviteId);
+
+    // Refresh page or state
+    setInvites(invites.filter(i => i.id !== inviteId));
+    window.location.reload();
+  };
+
+  const handleDeclineInvite = async (inviteId: string) => {
+    await supabase.from('workspace_invites')
+      .update({ status: 'rejected' })
+      .eq('id', inviteId);
+    setInvites(invites.filter(i => i.id !== inviteId));
+  };
+
   const handleCreateWorkspace = async (e: React.FormEvent) => {
     e.preventDefault();
     if (newWorkspaceName.trim()) {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
       const id = `${newWorkspaceName.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`;
       const randomStyle = randomColors[Math.floor(Math.random() * randomColors.length)];
       const randomIcon = randomIcons[Math.floor(Math.random() * randomIcons.length)];
@@ -65,14 +144,23 @@ export default function WorkspaceSelector() {
         icon_name: randomIcon,
         color: randomStyle.color,
         bg: randomStyle.bg,
-        border: randomStyle.border
+        border: randomStyle.border,
+        owner_id: session.user.id
       };
 
       const { error } = await supabase.from('workspaces').insert([newWorkspace]);
       if (error) {
-        console.error('Error creating workspace:', error);
+        console.error('Error creating workspace:', error.message || error.details || error.hint || error);
+        alert(`Database error: ${error.message}. Did you run the schema_v3.sql script in Supabase?`);
         return;
       }
+
+      // Add to workspace_members as owner
+      await supabase.from('workspace_members').insert([{
+        workspace_id: id,
+        user_id: session.user.id,
+        role: 'owner'
+      }]);
 
       addWorkspace({
         ...newWorkspace,
@@ -91,11 +179,9 @@ export default function WorkspaceSelector() {
 
   return (
     <div className="w-full h-screen bg-slate-950 overflow-y-auto relative">
-      {/* Animated Background Mesh - Fixed so it doesn't cut off when scrolling */}
       <div className="mesh-bg fixed inset-0 pointer-events-none" />
       <div className="fixed inset-0 bg-black/40 backdrop-blur-xl pointer-events-none" />
       
-      {/* Top Navigation Bar */}
       <header className="fixed top-0 left-0 right-0 z-50 px-6 py-4 flex items-center justify-between border-b border-white/5 bg-black/20 backdrop-blur-md">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-teal-400 to-indigo-600 flex items-center justify-center shadow-lg">
@@ -105,15 +191,15 @@ export default function WorkspaceSelector() {
         </div>
         
         <div className="flex items-center gap-3">
-          <button className="p-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-all">
-            <Settings className="w-5 h-5" />
-          </button>
-          <div className="w-px h-6 bg-white/10 mx-1" />
           <div className="flex items-center gap-3 px-3 py-1.5 rounded-xl bg-white/5 border border-white/5">
-            <div className="w-7 h-7 rounded-full bg-indigo-500/20 flex items-center justify-center">
-              <User className="w-4 h-4 text-indigo-400" />
+            <div className="w-7 h-7 rounded-full overflow-hidden bg-indigo-500/20 flex items-center justify-center border border-white/10">
+              {profile?.avatar_url ? (
+                <img src={profile.avatar_url} alt="Profile" className="w-full h-full object-cover" />
+              ) : (
+                <User className="w-4 h-4 text-indigo-400" />
+              )}
             </div>
-            <span className="text-sm font-medium text-slate-200">Engineer</span>
+            <span className="text-sm font-medium text-slate-200">{profile?.full_name?.split(' ')[0] || 'User'}</span>
           </div>
           <button 
             onClick={handleSignOut}
@@ -125,10 +211,8 @@ export default function WorkspaceSelector() {
         </div>
       </header>
 
-      {/* Central content wrapper */}
       <div className="relative z-10 w-full min-h-full flex flex-col items-center justify-center p-6 py-24">
         
-        {/* Header */}
         <motion.div 
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -139,19 +223,94 @@ export default function WorkspaceSelector() {
             <Layers className="w-8 h-8 text-white" />
           </div>
           <h1 className="text-4xl md:text-5xl font-bold text-white mb-4 tracking-tight">
-            Welcome back, Engineer.
+            Welcome back, {profile?.full_name?.split(' ')[0] || 'Engineer'}.
           </h1>
           <p className="text-slate-400 text-lg">Select a workspace to continue collaboration.</p>
         </motion.div>
 
-        {/* Workspace Grid */}
         {loadingWorkspaces ? (
            <div className="text-slate-400 animate-pulse">Loading workspaces...</div>
         ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 w-full">
+        <div className="flex flex-col w-full max-w-6xl gap-8">
+          
+          {/* Pending Invites Section */}
+          {invites.length > 0 && (
+            <div className="mb-4">
+              <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
+                Pending Invites ({invites.length})
+              </h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {invites.map((invite) => {
+                  const ws = invite.workspaces;
+                  const inviter = invite.inviter;
+                  const inviterAvatar = inviter?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(inviter?.full_name || 'Unknown')}&background=6366f1&color=fff`;
+                  return (
+                    <motion.div
+                      key={invite.id}
+                      initial={{ opacity: 0, scale: 0.96 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.96 }}
+                      className="p-5 rounded-2xl border border-indigo-500/30 bg-indigo-500/5 liquid-glass flex flex-col gap-4 relative overflow-hidden"
+                    >
+                      {/* Glow accent */}
+                      <div className="absolute -top-8 -right-8 w-24 h-24 rounded-full bg-indigo-500/10 blur-2xl pointer-events-none" />
+
+                      {/* Workspace info */}
+                      <div className="flex items-center gap-3">
+                        <div className={`w-12 h-12 rounded-xl flex items-center justify-center border shrink-0 ${ws?.bg || 'bg-white/5'} ${ws?.border || 'border-white/10'}`}>
+                          <Layers className={`w-6 h-6 ${ws?.color || 'text-slate-400'}`} />
+                        </div>
+                        <div className="min-w-0">
+                          <h3 className="text-white font-bold truncate">{ws?.name || 'Unknown Workspace'}</h3>
+                          <p className="text-xs text-slate-400 truncate">{ws?.team || 'Team'}</p>
+                        </div>
+                      </div>
+
+                      {/* Inviter info */}
+                      <div className="flex items-center gap-2 bg-white/5 rounded-xl px-3 py-2 border border-white/5">
+                        <img
+                          src={inviterAvatar}
+                          alt={inviter?.full_name || 'Unknown'}
+                          className="w-6 h-6 rounded-full object-cover border border-white/10 shrink-0"
+                        />
+                        <p className="text-xs text-slate-300">
+                          <span className="font-semibold text-white">{inviter?.full_name || 'Someone'}</span>
+                          {' '}<span className="text-slate-400">invited you to join</span>
+                        </p>
+                      </div>
+
+                      {/* Action buttons */}
+                      <div className="flex items-center gap-2 mt-auto">
+                        <button
+                          onClick={() => handleAcceptInvite(invite.id, invite.workspace_id)}
+                          className="flex-1 py-2 bg-indigo-500 hover:bg-indigo-400 text-white text-xs font-bold rounded-lg transition-colors"
+                        >
+                          Accept
+                        </button>
+                        <button
+                          onClick={() => handleDeclineInvite(invite.id)}
+                          className="flex-1 py-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-xs font-bold rounded-lg transition-colors"
+                        >
+                          Decline
+                        </button>
+                      </div>
+                    </motion.div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            {workspaces.length === 0 && (
+               <div className="col-span-full text-center text-slate-500 py-10 border border-dashed border-white/10 rounded-3xl bg-black/20">
+                  You are not part of any workspaces yet. Create one to get started!
+               </div>
+            )}
+          
           {workspaces.map((ws, idx) => {
             const Icon = iconMap[ws.iconName] || Layers;
-            
             return (
               <motion.button
                 key={ws.id}
@@ -161,32 +320,22 @@ export default function WorkspaceSelector() {
                 onClick={() => setActiveWorkspace(ws.id)}
                 className={`relative flex flex-col items-start p-8 rounded-3xl border border-white/5 bg-black/40 hover:bg-white/5 transition-all duration-300 text-left group overflow-hidden liquid-glass hover:-translate-y-1 hover:shadow-2xl hover:shadow-${ws.color.split('-')[1]}-500/10`}
               >
-                {/* Ambient glow inside card */}
                 <div className={`absolute -top-12 -right-12 w-32 h-32 rounded-full ${ws.bg} blur-2xl group-hover:opacity-100 opacity-50 transition-opacity`} />
-                
                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center mb-8 border ${ws.bg} ${ws.border}`}>
                   <Icon className={`w-7 h-7 ${ws.color}`} />
                 </div>
-
                 <div className="flex-1">
                   <h2 className="text-2xl font-bold text-white mb-1 group-hover:text-transparent group-hover:bg-clip-text group-hover:bg-gradient-to-r group-hover:from-white group-hover:to-slate-300 transition-all">
                     {ws.name}
                   </h2>
                   <p className="text-slate-400 text-sm mb-6">{ws.team}</p>
                 </div>
-
                 <div className="w-full flex items-center justify-between pt-6 border-t border-white/10 mt-auto">
                   <div className="flex items-center gap-2">
-                    <div className="flex -space-x-2">
-                      {[...Array(Math.min(3, ws.members))].map((_, i) => (
-                        <div key={i} className="w-6 h-6 rounded-full bg-slate-800 border border-slate-900" />
-                      ))}
-                    </div>
                     <span className="text-xs text-slate-500 font-medium ml-1">
-                      {ws.active > 0 ? `${ws.active} active` : `${ws.members} members`}
+                      {ws.members} members
                     </span>
                   </div>
-                  
                   <div className={`p-2 rounded-full bg-white/5 group-hover:${ws.bg} transition-colors`}>
                     <ArrowRight className={`w-4 h-4 text-slate-400 group-hover:${ws.color}`} />
                   </div>
@@ -213,6 +362,7 @@ export default function WorkspaceSelector() {
               Start a new team or project
             </p>
           </motion.button>
+          </div>
         </div>
         )}
       </div>

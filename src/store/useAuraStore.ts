@@ -44,6 +44,7 @@ interface AuraState {
   screenShareActive: boolean;
   participants: Participant[];
   messages: ChatMessage[];
+  onlineUsers: Set<string>;
   
   setIsAuthenticated: (status: boolean) => void;
   setActiveWorkspace: (workspaceId: string | null) => void;
@@ -58,6 +59,7 @@ interface AuraState {
   setInCall: (inCall: boolean) => void;
   sendMessage: (content: string) => void;
   setWorkspaces: (workspaces: WorkspaceData[]) => void;
+  setOnlineUsers: (users: Set<string>) => void;
 }
 
 export const useAuraStore = create<AuraState>((set) => ({
@@ -66,9 +68,10 @@ export const useAuraStore = create<AuraState>((set) => ({
   workspaces: [],
   activeTab: 'home',
   activeChannel: 'ui-ux-design',
+  onlineUsers: new Set<string>(),
   activeDmUser: '3', // Marcus Chen
   activeFileId: null,
-  inCall: true,
+  inCall: false,
   micActive: true,
   videoActive: true,
   screenShareActive: false,
@@ -117,6 +120,7 @@ export const useAuraStore = create<AuraState>((set) => ({
   setActiveWorkspace: (workspaceId) => set({ activeWorkspace: workspaceId }),
   setWorkspaces: (workspaces) => set({ workspaces }),
   addWorkspace: (workspace) => set((state) => ({ workspaces: [...state.workspaces, workspace] })),
+  setOnlineUsers: (users) => set({ onlineUsers: new Set(users) }),
   setActiveTab: (tab) => set({ activeTab: tab }),
   setActiveChannel: (channel) => set({ activeChannel: channel }),
   setActiveDmUser: (userId) => set({ activeDmUser: userId }),

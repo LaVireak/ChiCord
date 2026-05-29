@@ -1,31 +1,31 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuraStore } from '@/store/useAuraStore';
 import ChatSection from './ChatSection';
 import { Phone, Video, Info } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
 
 export default function DirectMessagesPanel() {
-  const { activeDmUser } = useAuraStore();
+  const { activeDmUser, onlineUsers } = useAuraStore();
   const [user, setUser] = useState<any>(null);
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (!activeDmUser) return;
     const fetchUser = async () => {
-      const { data } = await import('@/lib/supabase').then(m => 
-        m.supabase.from('profiles').select('*').eq('id', activeDmUser).single()
-      );
+      const { data } = await supabase.from('profiles').select('*').eq('id', activeDmUser).single();
       if (data) {
         setUser({
           id: data.id,
           name: data.full_name,
           avatar: data.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(data.full_name)}&background=6366f1&color=fff`,
-          status: 'Online'
         });
       }
     };
     fetchUser();
   }, [activeDmUser]);
+
+  const isOnline = !!activeDmUser && onlineUsers.has(activeDmUser);
 
   if (!user) {
     return (
@@ -48,13 +48,13 @@ export default function DirectMessagesPanel() {
               className="w-12 h-12 rounded-full object-cover border border-white/10"
             />
             {/* Status Indicator */}
-            <div className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-[#0B101F] ${
-              user.status !== 'Idle' ? 'bg-teal-400' : 'bg-slate-500'
-            }`} />
+            {isOnline && (
+              <div className="absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-[#0B101F] bg-teal-400" />
+            )}
           </div>
           <div>
             <h2 className="text-lg font-bold text-white tracking-wide">{user.name}</h2>
-            <p className="text-xs text-slate-400 mt-0.5">{user.status !== 'Idle' ? 'Active now' : 'Offline'}</p>
+            <p className="text-xs text-slate-400 mt-0.5">{isOnline ? 'Active now' : 'Offline'}</p>
           </div>
         </div>
 
@@ -73,7 +73,7 @@ export default function DirectMessagesPanel() {
       </header>
 
       {/* The generic chat section which adapts to the 'direct' tab state via the store */}
-      <ChatSection />
+      <ChatSection dmTargetName={user.name} />
       
     </div>
   );

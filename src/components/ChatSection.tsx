@@ -6,18 +6,25 @@ import { Paperclip, Send, Smile, Plus, Image } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '@/lib/supabase';
 
-export default function ChatSection() {
+export default function ChatSection({ dmTargetName }: { dmTargetName?: string }) {
   const { activeChannel, activeTab, activeDmUser, participants } = useAuraStore();
   const [inputText, setInputText] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
-  // Filter messages based on active tab
-  const currentTargetId = activeTab === 'direct' ? `dm_${activeDmUser}` : activeChannel;
+  // Canonical DM channel ID: sort both user IDs so both sides always use the same key
+  // e.g. dm_aaa_bbb — regardless of who opened the conversation first
+  const getDmChannelId = (myId: string, otherId: string) =>
+    `dm_${[myId, otherId].sort().join('_')}`;
+  
+  // During initial render currentUser isn't set yet; we'll recompute inside the effect
+  const currentTargetId = activeTab === 'direct'
+    ? (currentUser ? getDmChannelId(currentUser.id, activeDmUser) : null)
+    : activeChannel;
   
   // Resolve DM target name for placeholder
-  const dmTargetName = activeTab === 'direct' ? participants.find(p => p.id === activeDmUser)?.name : '';
+  const resolvedDmTargetName = dmTargetName || (activeTab === 'direct' ? participants.find(p => p.id === activeDmUser)?.name : '');
 
   // Get current user and fetch messages
   useEffect(() => {
@@ -25,22 +32,20 @@ export default function ChatSection() {
 
     const setup = async () => {
       const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
-        setCurrentUser(session.user);
-        
-        // Ensure profile exists to prevent foreign key errors on sending message
-        const { data: profile } = await supabase.from('profiles').select('id').eq('id', session.user.id).single();
-        if (!profile) {
-          await supabase.from('profiles').insert({
-            id: session.user.id,
-            full_name: session.user.email?.split('@')[0] || 'User',
-            avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150'
-          });
-        }
-      }
+      if (!session) return;
+
+      const myId = session.user.id;
+      setCurrentUser(session.user);
+
+      // Compute the canonical channel ID now that we have the current user's ID
+      const targetId = activeTab === 'direct'
+        ? getDmChannelId(myId, activeDmUser)
+        : activeChannel;
+
+      if (!targetId) return;
 
       // Fetch existing messages
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from('messages')
         .select(`
           id,
@@ -53,7 +58,7 @@ export default function ChatSection() {
             avatar_url
           )
         `)
-        .eq('channel_id', currentTargetId)
+        .eq('channel_id', targetId)
         .order('created_at', { ascending: true });
 
       if (data) {
@@ -61,23 +66,21 @@ export default function ChatSection() {
           id: m.id,
           content: m.content,
           senderName: m.profiles?.full_name || 'Unknown User',
-          avatar: m.profiles?.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+          avatar: m.profiles?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(m.profiles?.full_name || 'U')}&background=6366f1&color=fff`,
           timestamp: new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          isSelf: m.sender_id === session?.user?.id,
+          isSelf: m.sender_id === myId,
           channelId: m.channel_id
         }));
         setMessages(mapped);
       }
 
       // Subscribe to new messages for this channel
-      const channelName = `messages_${currentTargetId}_${Date.now()}`;
       channelSub = supabase
-        .channel(channelName)
+        .channel(`messages:${targetId}:${Date.now()}`)
         .on(
           'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'messages', filter: `channel_id=eq.${currentTargetId}` },
+          { event: 'INSERT', schema: 'public', table: 'messages', filter: `channel_id=eq.${targetId}` },
           async (payload) => {
-            // Need to fetch the profile for the new message
             const { data: profile } = await supabase
               .from('profiles')
               .select('full_name, avatar_url')
@@ -88,9 +91,9 @@ export default function ChatSection() {
               id: payload.new.id,
               content: payload.new.content,
               senderName: profile?.full_name || 'Unknown User',
-              avatar: profile?.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+              avatar: profile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(profile?.full_name || 'U')}&background=6366f1&color=fff`,
               timestamp: new Date(payload.new.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              isSelf: payload.new.sender_id === session?.user?.id,
+              isSelf: payload.new.sender_id === myId,
               channelId: payload.new.channel_id
             };
             setMessages((prev) => {
@@ -109,7 +112,7 @@ export default function ChatSection() {
         supabase.removeChannel(channelSub);
       }
     };
-  }, [currentTargetId]);
+  }, [activeTab, activeDmUser, activeChannel]);
 
   // Auto-scroll to bottom of messages
   const scrollToBottom = () => {
@@ -127,14 +130,20 @@ export default function ChatSection() {
     const text = inputText.trim();
     setInputText('');
 
+    // Compute canonical ID at send time too
+    const targetId = activeTab === 'direct'
+      ? getDmChannelId(currentUser.id, activeDmUser)
+      : activeChannel;
+
     const { error } = await supabase.from('messages').insert({
-      channel_id: currentTargetId,
+      channel_id: targetId,
       sender_id: currentUser.id,
       content: text
     });
     
     if (error) {
       console.error('Error sending message:', error);
+      setInputText(text); // restore on failure
     }
   };
 
@@ -229,7 +238,7 @@ export default function ChatSection() {
         {/* TextInput */}
         <input
           type="text"
-          placeholder={activeTab === 'direct' ? `Message @${dmTargetName}...` : `Type a message in #${activeChannel}...`}
+          placeholder={activeTab === 'direct' ? `Message @${resolvedDmTargetName}...` : `Type a message in #${activeChannel}...`}
           value={inputText}
           onChange={(e) => setInputText(e.target.value)}
           className="flex-1 bg-transparent text-sm text-slate-100 placeholder-slate-500 focus:outline-none"

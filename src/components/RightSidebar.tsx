@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useAuraStore } from '@/store/useAuraStore';
-import { Mic, MicOff, Monitor, Radio, Users2, MessageSquare, FileText, Download, Share2, Link, File, Circle } from 'lucide-react';
+import { Mic, MicOff, Monitor, Radio, Users2, MessageSquare, FileText, Download, Share2, Link, File } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { getIconComponent } from './FilesPanel';
 
@@ -11,32 +11,87 @@ interface ProfileMember {
   full_name: string;
   avatar_url: string;
   isOnline?: boolean;
+  role?: string;
 }
 
 export default function RightSidebar() {
-  const { inCall, activeTab, activeDmUser, setActiveDmUser, setActiveTab, activeFileId } = useAuraStore();
+  const { inCall, activeTab, activeDmUser, setActiveDmUser, setActiveTab, activeFileId, activeWorkspace, onlineUsers, setOnlineUsers } = useAuraStore();
   const [members, setMembers] = useState<ProfileMember[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [activeFile, setActiveFile] = useState<any>(null);
 
   useEffect(() => {
+    if (!activeWorkspace) return;
+    
     const fetchMembers = async () => {
       const { data: { session } } = await supabase.auth.getSession();
-      if (session) setCurrentUserId(session.user.id);
+      const uid = session?.user?.id ?? null;
+      if (uid) setCurrentUserId(uid);
 
-      const { data } = await supabase.from('profiles').select('id, full_name, avatar_url');
-      if (data) setMembers(data.map(p => ({ ...p, isOnline: true })));
+      // Fetch from workspace_members joined with profiles
+      const { data } = await supabase.from('workspace_members')
+        .select(`
+          user_id,
+          role,
+          profile:profiles!user_id(id, full_name, avatar_url)
+        `)
+        .eq('workspace_id', activeWorkspace);
+
+      if (data) {
+        const mapped = data.map((m: any) => ({
+          id: m.profile.id,
+          full_name: m.profile.full_name,
+          avatar_url: m.profile.avatar_url,
+          role: m.role
+        }));
+        setMembers(mapped);
+      }
     };
 
     fetchMembers();
 
-    const sub = supabase.channel('public:profiles')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => {
+    const sub = supabase.channel(`public:workspace_members:${activeWorkspace}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'workspace_members', filter: `workspace_id=eq.${activeWorkspace}` }, () => {
         fetchMembers();
       }).subscribe();
 
     return () => { supabase.removeChannel(sub); };
-  }, []);
+  }, [activeWorkspace]);
+
+  // Presence Tracking — single subscription that writes to shared store
+  useEffect(() => {
+    if (!activeWorkspace || !currentUserId) return;
+
+    // Create a uniquely named presence channel per session so Supabase
+    // doesn't confuse it with any other component's channel.
+    const room = supabase.channel(`presence:workspace:${activeWorkspace}`, {
+      config: { presence: { key: currentUserId } }
+    });
+
+    const handleSync = () => {
+      const state = room.presenceState<{ user_id: string }>();
+      const online = new Set<string>();
+      for (const key in state) {
+        state[key].forEach((p) => {
+          if (p.user_id) online.add(p.user_id);
+        });
+      }
+      // IMPORTANT: always spread into a new Set so Zustand/React sees the change
+      setOnlineUsers(new Set(online));
+    };
+
+    room
+      .on('presence', { event: 'sync' }, handleSync)
+      .on('presence', { event: 'join' }, handleSync)
+      .on('presence', { event: 'leave' }, handleSync)
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          await room.track({ user_id: currentUserId });
+        }
+      });
+
+    return () => { room.unsubscribe(); };
+  }, [activeWorkspace, currentUserId]);
 
   // Fetch active file details
   useEffect(() => {
@@ -60,11 +115,11 @@ export default function RightSidebar() {
 
   const callList = inCall ? [
     ...(self ? [{ id: self.id, name: self.full_name, avatar: self.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(self.full_name)}&background=14b8a6&color=fff`, status: 'Idle', isSelf: true }] : []),
-    ...otherMembers.slice(0, 3).map((m, idx) => ({
+    ...otherMembers.map((m) => ({
       id: m.id,
       name: m.full_name,
       avatar: m.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(m.full_name)}&background=6366f1&color=fff`,
-      status: idx === 0 ? 'Speaking...' : idx === 1 ? 'Muted' : 'Idle',
+      status: 'Idle',
       isSelf: false
     }))
   ] : [];
@@ -154,13 +209,15 @@ export default function RightSidebar() {
                           alt={contact.full_name}
                           className={`w-10 h-10 rounded-full object-cover border-2 ${isActiveDm ? 'border-indigo-400' : 'border-white/10'}`}
                         />
-                        <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-slate-900 bg-teal-400" />
+                        {onlineUsers.has(contact.id) && (
+                          <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-slate-900 bg-teal-400" />
+                        )}
                       </div>
                       <div className="flex-1 min-w-0">
                         <h4 className={`text-sm font-semibold truncate ${isActiveDm ? 'text-white' : 'text-slate-200'}`}>
                           {contact.full_name}
                         </h4>
-                        <p className="text-xs text-teal-400 truncate">Online</p>
+                        <p className="text-xs text-teal-400 truncate">{contact.role?.toUpperCase()}</p>
                       </div>
                     </button>
                   );
@@ -249,7 +306,7 @@ export default function RightSidebar() {
                     </div>
                     <div>
                       <h5 className="text-xs font-semibold text-slate-200">{self.full_name}</h5>
-                      <span className="text-[10px] text-teal-400">You • Online</span>
+                      <span className="text-[10px] text-teal-400">You • {self.role?.toUpperCase()}</span>
                     </div>
                   </div>
                 )}
@@ -273,11 +330,13 @@ export default function RightSidebar() {
                           alt={member.full_name}
                           className="w-8 h-8 rounded-full object-cover border border-white/10"
                         />
-                        <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-slate-900 bg-teal-400" />
+                        {onlineUsers.has(member.id) && (
+                          <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-slate-900 bg-teal-400" />
+                        )}
                       </div>
                       <div>
                         <h5 className="text-xs font-semibold text-slate-200 group-hover:text-white transition-colors">{member.full_name}</h5>
-                        <span className="text-[10px] text-slate-500">Online</span>
+                        <span className="text-[10px] text-slate-500">{member.role?.toUpperCase()}</span>
                       </div>
                     </div>
                     <MessageSquare className="w-3.5 h-3.5 text-slate-600 group-hover:text-indigo-400 transition-colors" />

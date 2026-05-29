@@ -59,10 +59,11 @@ export default function AuthPage() {
 
         // Create user profile
         if (data.user) {
+          const defaultAvatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=6366f1&color=fff`;
           const { error: profileError } = await supabase.from('profiles').insert({
             id: data.user.id,
             full_name: name,
-            avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150'
+            avatar_url: defaultAvatar
           });
           if (profileError) {
              console.error('Profile creation error:', profileError);
