@@ -45,12 +45,23 @@ export default function RightSidebar() {
     return () => { supabase.removeChannel(sub); };
   }, []);
 
-  const callList = inCall ? participants : [];
-  const activeFile = activeFileId ? mockFiles.find(f => f.id === activeFileId) : null;
-
   // Split into self and others
   const self = members.find(m => m.id === currentUserId);
   const otherMembers = members.filter(m => m.id !== currentUserId);
+
+  // If in call, generate the participant list using real members
+  const callList = inCall ? [
+    ...(self ? [{ id: self.id, name: self.full_name, avatar: self.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(self.full_name)}&background=14b8a6&color=fff`, status: 'Idle', isSelf: true }] : []),
+    ...otherMembers.slice(0, 3).map((m, idx) => ({
+      id: m.id,
+      name: m.full_name,
+      avatar: m.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(m.full_name)}&background=6366f1&color=fff`,
+      status: idx === 0 ? 'Speaking...' : idx === 1 ? 'Muted' : 'Idle',
+      isSelf: false
+    }))
+  ] : [];
+
+  const activeFile = activeFileId ? mockFiles.find(f => f.id === activeFileId) : null;
 
   // Build DM contacts: all profiles except self
   const dmContacts = otherMembers;
