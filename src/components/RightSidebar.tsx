@@ -19,6 +19,7 @@ export default function RightSidebar() {
   const [members, setMembers] = useState<ProfileMember[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [activeFile, setActiveFile] = useState<any>(null);
+  const [copyLabel, setCopyLabel] = useState('Copy Link');
 
   useEffect(() => {
     if (!activeWorkspace) return;
@@ -110,6 +111,25 @@ export default function RightSidebar() {
     fetchFile();
   }, [activeFileId]);
 
+  const handleDownloadFile = async () => {
+    if (!activeFile?.file_path) {
+      alert('This file has no stored path and cannot be downloaded.');
+      return;
+    }
+    const { data } = await supabase.storage.from('workspace-files').createSignedUrl(activeFile.file_path, 60);
+    if (data?.signedUrl) window.open(data.signedUrl, '_blank');
+  };
+
+  const handleCopyLink = async () => {
+    if (!activeFile?.file_path) return;
+    const { data } = await supabase.storage.from('workspace-files').createSignedUrl(activeFile.file_path, 3600);
+    if (data?.signedUrl) {
+      await navigator.clipboard.writeText(data.signedUrl);
+      setCopyLabel('Copied!');
+      setTimeout(() => setCopyLabel('Copy Link'), 2000);
+    }
+  };
+
   const self = members.find(m => m.id === currentUserId);
   const otherMembers = members.filter(m => m.id !== currentUserId);
 
@@ -160,15 +180,12 @@ export default function RightSidebar() {
                   </div>
                 </div>
                 <div className="flex flex-col gap-3">
-                  <button className="w-full flex items-center justify-center gap-2 py-3 bg-teal-500/95 hover:bg-teal-400 text-white rounded-xl text-sm font-semibold transition-all shadow-lg shadow-teal-500/20">
+                  <button onClick={handleDownloadFile} className="w-full flex items-center justify-center gap-2 py-3 bg-teal-500/95 hover:bg-teal-400 text-white rounded-xl text-sm font-semibold transition-all shadow-lg shadow-teal-500/20">
                     <Download className="w-4 h-4" /> Download File
                   </button>
                   <div className="flex gap-3">
-                    <button className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm transition-all border border-white/5">
-                      <Share2 className="w-4 h-4" /> Share
-                    </button>
-                    <button className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm transition-all border border-white/5">
-                      <Link className="w-4 h-4" /> Copy Link
+                    <button onClick={handleCopyLink} className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm transition-all border border-white/5">
+                      <Link className="w-4 h-4" /> {copyLabel}
                     </button>
                   </div>
                 </div>

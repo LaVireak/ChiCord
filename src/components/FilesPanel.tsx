@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { useAuraStore } from '@/store/useAuraStore';
-import { Search, Filter, Upload, FileText, Image as ImageIcon, File, FolderArchive, MoreVertical, X, Trash2, Pencil, ChevronDown, Check } from 'lucide-react';
+import { Search, Filter, Upload, FileText, Image as ImageIcon, File, FolderArchive, MoreVertical, X, Trash2, Pencil, ChevronDown, Check, Download, Hash, UserPlus } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '@/lib/supabase';
 
@@ -10,6 +10,8 @@ export const getIconComponent = (iconName: string) => {
   switch (iconName) {
     case 'ImageIcon': return ImageIcon;
     case 'FolderArchive': return FolderArchive;
+    case 'Hash': return Hash;
+    case 'UserPlus': return UserPlus;
     default: return FileText;
   }
 };
@@ -24,6 +26,7 @@ export interface FileData {
   icon_name: string;
   icon_color: string;
   bg_color: string;
+  file_path?: string;
   created_at: string;
 }
 
@@ -78,10 +81,14 @@ export default function FilesPanel() {
     return matchesSearch && matchesType;
   });
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (id: string, filePath?: string) => {
     setFiles(prev => prev.filter(f => f.id !== id));
     if (activeFileId === id) setActiveFileId(null);
     setMenuOpenId(null);
+    
+    if (filePath) {
+      await supabase.storage.from('workspace-files').remove([filePath]);
+    }
     await supabase.from('files').delete().eq('id', id);
   };
 
@@ -97,6 +104,21 @@ export default function FilesPanel() {
       await supabase.from('files').update({ name: renameValue.trim() }).eq('id', id);
     }
     setRenamingId(null);
+  };
+
+  const handleDownload = async (file: FileData) => {
+    if (!file.file_path) {
+      alert("This file is a legacy placeholder and cannot be downloaded.");
+      setMenuOpenId(null);
+      return;
+    }
+    const { data, error } = await supabase.storage.from('workspace-files').createSignedUrl(file.file_path, 60);
+    if (error || !data) {
+      alert("Error generating download link.");
+      return;
+    }
+    window.open(data.signedUrl, '_blank');
+    setMenuOpenId(null);
   };
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -116,6 +138,17 @@ export default function FilesPanel() {
       
       const { data: { session } } = await supabase.auth.getSession();
       
+      const safeName = file.name.replace(/[^a-zA-Z0-9.\-_]/g, '');
+      const filePath = `${activeWorkspace}/${Date.now()}_${safeName}`;
+      
+      const { error: uploadError } = await supabase.storage.from('workspace-files').upload(filePath, file);
+      
+      if (uploadError) {
+        console.error("Error uploading file:", uploadError);
+        alert(`Failed to upload: ${uploadError.message}`);
+        return;
+      }
+      
       const newFile = {
         workspace_id: activeWorkspace,
         uploader_id: session?.user.id,
@@ -124,10 +157,22 @@ export default function FilesPanel() {
         size: sizeStr,
         icon_name,
         icon_color: style.color,
-        bg_color: style.bg
+        bg_color: style.bg,
+        file_path: filePath
       };
       
       await supabase.from('files').insert([newFile]);
+      
+      // Log activity
+      await supabase.from('activities').insert({
+        workspace_id: activeWorkspace,
+        user_id: session?.user.id,
+        action: 'uploaded a file',
+        target: file.name,
+        icon_type: icon_name,
+        icon_color: style.color
+      });
+      
       e.target.value = '';
     }
   };
@@ -257,7 +302,13 @@ export default function FilesPanel() {
                               <Pencil className="w-3.5 h-3.5" /> Rename
                             </button>
                             <button
-                              onClick={() => handleDelete(file.id)}
+                              onClick={() => handleDownload(file)}
+                              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-300 hover:bg-white/5 rounded-lg transition-colors"
+                            >
+                              <Download className="w-3.5 h-3.5" /> Download
+                            </button>
+                            <button
+                              onClick={() => handleDelete(file.id, file.file_path)}
                               className="w-full flex items-center gap-2 px-3 py-2 text-sm text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors"
                             >
                               <Trash2 className="w-3.5 h-3.5" /> Delete

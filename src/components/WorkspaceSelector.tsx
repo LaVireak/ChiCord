@@ -94,7 +94,24 @@ export default function WorkspaceSelector() {
 
       setLoadingWorkspaces(false);
     };
+    
     fetchWorkspaces();
+
+    // Subscribe to changes
+    const inviteSub = supabase.channel('public:workspace_invites')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'workspace_invites' }, () => {
+        fetchWorkspaces();
+      }).subscribe();
+      
+    const memberSub = supabase.channel('public:workspace_members')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'workspace_members' }, () => {
+        fetchWorkspaces();
+      }).subscribe();
+
+    return () => {
+      supabase.removeChannel(inviteSub);
+      supabase.removeChannel(memberSub);
+    };
   }, [setWorkspaces]);
 
   const handleAcceptInvite = async (inviteId: string, workspaceId: string) => {
@@ -112,6 +129,16 @@ export default function WorkspaceSelector() {
     await supabase.from('workspace_invites')
       .update({ status: 'accepted' })
       .eq('id', inviteId);
+      
+    // Log activity
+    await supabase.from('activities').insert({
+      workspace_id: workspaceId,
+      user_id: session.user.id,
+      action: 'joined the workspace',
+      target: '',
+      icon_type: 'UserPlus',
+      icon_color: 'text-indigo-400'
+    });
 
     // Refresh page or state
     setInvites(invites.filter(i => i.id !== inviteId));

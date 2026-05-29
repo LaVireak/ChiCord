@@ -61,13 +61,15 @@ export default function MiddlePanel() {
     
     fetchChannelsAndRole();
     
-    const sub = supabase.channel(`public:channels:${activeWorkspace}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'channels', filter: `workspace_id=eq.${activeWorkspace}` }, (payload) => {
-        setChannels(prev => [...prev, payload.new as Channel]);
+    const channelSub = supabase.channel(`public:channels:${activeWorkspace}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'channels', filter: `workspace_id=eq.${activeWorkspace}` }, () => {
+        fetchChannelsAndRole();
       }).subscribe();
-      
-    return () => { supabase.removeChannel(sub); };
-  }, [activeWorkspace]);
+
+    return () => {
+      supabase.removeChannel(channelSub);
+    };
+  }, [activeWorkspace, setActiveChannel]);
 
   const handleCreateChannel = async () => {
     const name = window.prompt("Enter new channel name:");
@@ -82,6 +84,18 @@ export default function MiddlePanel() {
 
     if (!error) {
       setActiveChannel(id);
+      
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        await supabase.from('activities').insert({
+          workspace_id: activeWorkspace,
+          user_id: session.user.id,
+          action: 'created channel',
+          target: `#${name.trim().toLowerCase()}`,
+          icon_type: 'Hash',
+          icon_color: 'text-teal-400'
+        });
+      }
     } else {
       alert("Failed to create channel. You might not have permission.");
     }

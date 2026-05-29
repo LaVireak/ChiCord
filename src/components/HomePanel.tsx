@@ -9,9 +9,11 @@ import {
   FileText, 
   Video, 
   MessageSquare,
-  ArrowRight
+  ArrowRight,
+  Plus,
+  X
 } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '@/lib/supabase';
 import { getIconComponent } from './FilesPanel';
 
@@ -21,6 +23,9 @@ export default function HomePanel() {
   const [channels, setChannels] = useState<any[]>([]);
   const [events, setEvents] = useState<any[]>([]);
   const [activities, setActivities] = useState<any[]>([]);
+  
+  const [showEventModal, setShowEventModal] = useState(false);
+  const [newEvent, setNewEvent] = useState({ title: '', time_string: '', type: 'call' });
 
   useEffect(() => {
     const fetchData = async () => {
@@ -60,12 +65,11 @@ export default function HomePanel() {
 
     if (!activeWorkspace) return;
 
-    // Subscriptions
     const subChannels = supabase.channel(`public:channels:home:${activeWorkspace}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'channels', filter: `workspace_id=eq.${activeWorkspace}` }, () => {
         fetchData();
       }).subscribe();
-      
+
     const subEvents = supabase.channel(`public:events:home:${activeWorkspace}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'events', filter: `workspace_id=eq.${activeWorkspace}` }, () => {
         fetchData();
@@ -102,6 +106,21 @@ export default function HomePanel() {
       case 'chat': return 'text-indigo-400';
       default: return 'text-slate-400';
     }
+  };
+
+  const handleCreateEvent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeWorkspace || !newEvent.title.trim() || !newEvent.time_string.trim()) return;
+    
+    await supabase.from('events').insert({
+      workspace_id: activeWorkspace,
+      title: newEvent.title.trim(),
+      time_string: newEvent.time_string.trim(),
+      type: newEvent.type
+    });
+    
+    setShowEventModal(false);
+    setNewEvent({ title: '', time_string: '', type: 'call' });
   };
 
   return (
@@ -186,9 +205,18 @@ export default function HomePanel() {
           
           {/* Upcoming Schedule */}
           <section className="liquid-glass-card rounded-3xl p-6 border border-white/5 flex flex-col min-h-[300px]">
-            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-6 flex items-center gap-2 shrink-0">
-              <Calendar className="w-3.5 h-3.5" /> Upcoming Schedule
-            </h3>
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2 shrink-0">
+                <Calendar className="w-3.5 h-3.5" /> Upcoming Schedule
+              </h3>
+              <button 
+                onClick={() => setShowEventModal(true)}
+                className="p-1.5 bg-white/5 hover:bg-white/10 rounded-lg text-slate-300 transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+            </div>
+            
             <div className="space-y-4 flex-1">
               {events.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-slate-500 gap-2 opacity-50">
@@ -251,6 +279,79 @@ export default function HomePanel() {
 
         </div>
       </div>
+      
+      {/* Create Event Modal */}
+      <AnimatePresence>
+        {showEventModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="w-full max-w-md bg-[#0f1423] border border-white/10 rounded-3xl shadow-2xl overflow-hidden flex flex-col"
+            >
+              <div className="flex items-center justify-between p-5 border-b border-white/10 bg-white/5">
+                <h2 className="text-lg font-bold text-white tracking-wide">Schedule Event</h2>
+                <button 
+                  onClick={() => setShowEventModal(false)}
+                  className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-white/10 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <form onSubmit={handleCreateEvent} className="p-6 space-y-5">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Event Title</label>
+                  <input
+                    autoFocus
+                    type="text"
+                    required
+                    value={newEvent.title}
+                    onChange={(e) => setNewEvent({ ...newEvent, title: e.target.value })}
+                    placeholder="e.g. Weekly Sync"
+                    className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500 transition-all"
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Time / Date</label>
+                  <input
+                    type="text"
+                    required
+                    value={newEvent.time_string}
+                    onChange={(e) => setNewEvent({ ...newEvent, time_string: e.target.value })}
+                    placeholder="e.g. Today, 2:00 PM"
+                    className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500 transition-all"
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Type</label>
+                  <select
+                    value={newEvent.type}
+                    onChange={(e) => setNewEvent({ ...newEvent, type: e.target.value })}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500 transition-all"
+                  >
+                    <option value="call">Video Call</option>
+                    <option value="chat">Chat / Text</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    type="submit"
+                    className="w-full bg-teal-500 hover:bg-teal-400 text-white font-bold py-3 px-4 rounded-xl shadow-lg shadow-teal-500/20 transition-all"
+                  >
+                    Schedule
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
