@@ -9,13 +9,30 @@ import { supabase } from '@/lib/supabase';
 export default function ChatSection({ dmTargetName }: { dmTargetName?: string }) {
   const { activeChannel, activeTab, activeDmUser, participants, activeWorkspace } = useAuraStore();
   const [inputText, setInputText] = useState('');
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<any[]>([]);
+  const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+
+  const REACTION_EMOJIS = ['👍', '❤️', '😂', '🎉', '😮'];
+
+  const buildReactionsMap = (rows: any[]) => {
+    const map: Record<string, Record<string, { count: number; users: string[] }>> = {};
+    rows.forEach((r) => {
+      const mid = r.message_id;
+      const emoji = r.emoji;
+      const user = r.user_id;
+      if (!map[mid]) map[mid] = {};
+      if (!map[mid][emoji]) map[mid][emoji] = { count: 0, users: [] };
+      map[mid][emoji].count += 1;
+      map[mid][emoji].users.push(user);
+    });
+    return map;
+  };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, isImageOnly = false) => {
     const file = e.target.files?.[0];
@@ -141,16 +158,31 @@ export default function ChatSection({ dmTargetName }: { dmTargetName?: string })
         .order('created_at', { ascending: true });
 
       if (data) {
-        const mapped: ChatMessage[] = data.map((m: any) => ({
+        const mapped: any[] = data.map((m: any) => ({
           id: m.id,
           content: m.content,
           senderName: m.profiles?.full_name || 'Unknown User',
           avatar: m.profiles?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(m.profiles?.full_name || 'U')}&background=6366f1&color=fff`,
           timestamp: new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           isSelf: m.sender_id === myId,
-          channelId: m.channel_id
+          channelId: m.channel_id,
+          reactions: {}
         }));
         setMessages(mapped);
+
+        // Fetch reactions for these messages
+        try {
+          const messageIds = mapped.map((mm) => mm.id);
+          if (messageIds.length > 0) {
+            const { data: reacts } = await supabase.from('reactions').select('id,message_id,user_id,emoji').in('message_id', messageIds);
+            if (reacts) {
+              const rmap = buildReactionsMap(reacts);
+              setMessages((prev) => prev.map(m => ({ ...m, reactions: rmap[m.id] || {} })));
+            }
+          }
+        } catch (e) {
+          // ignore reaction fetch errors
+        }
       }
 
       // Subscribe to new messages for this channel
@@ -182,6 +214,75 @@ export default function ChatSection({ dmTargetName }: { dmTargetName?: string })
           }
         )
         .subscribe();
+
+      // Subscribe to typing status changes for this channel
+      const typingSub = supabase
+        .channel(`typing:${targetId}:${Date.now()}`)
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'typing_statuses', filter: `channel_id=eq.${targetId}` },
+          (payload) => {
+            const userId = payload.new.user_id;
+            const isTyping = payload.new.is_typing;
+            setTypingUsers((prev) => {
+              if (isTyping) {
+                if (prev.includes(userId)) return prev;
+                return [...prev, userId];
+              } else {
+                return prev.filter(u => u !== userId);
+              }
+            });
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'typing_statuses', filter: `channel_id=eq.${targetId}` },
+          (payload) => {
+            const userId = payload.new.user_id;
+            const isTyping = payload.new.is_typing;
+            setTypingUsers((prev) => {
+              if (isTyping) {
+                if (prev.includes(userId)) return prev;
+                return [...prev, userId];
+              } else {
+                return prev.filter(u => u !== userId);
+              }
+            });
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: 'DELETE', schema: 'public', table: 'typing_statuses', filter: `channel_id=eq.${targetId}` },
+          (payload) => {
+            const userId = payload.old.user_id;
+            setTypingUsers((prev) => prev.filter(u => u !== userId));
+          }
+        )
+        .subscribe();
+
+      // Subscribe to reactions changes (global subscription, we'll filter locally)
+      const reactionsSub = supabase
+        .channel(`reactions:${targetId}:${Date.now()}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'reactions' }, async (payload) => {
+          const msgId = payload.new?.message_id || payload.old?.message_id;
+          if (!msgId) return;
+          // If this message is in our list, refetch reactions for it
+          setMessages(async (prev: any[]) => {
+            const has = prev.some(m => m.id === msgId);
+            if (!has) return prev;
+            try {
+              const { data: reacts } = await supabase.from('reactions').select('id,message_id,user_id,emoji').eq('message_id', msgId);
+              const rmap = buildReactionsMap(reacts || []);
+              return prev.map(m => m.id === msgId ? { ...m, reactions: rmap[m.id] || {} } : m);
+            } catch (e) {
+              return prev;
+            }
+          });
+        })
+        .subscribe();
+
+      // Keep reference so we can remove it on cleanup
+      // We will include it in cleanup below
     };
 
     setup();
@@ -190,8 +291,76 @@ export default function ChatSection({ dmTargetName }: { dmTargetName?: string })
       if (channelSub) {
         supabase.removeChannel(channelSub);
       }
+      try {
+        // supabase.removeChannel is tolerant if channel is undefined
+        // Also remove typing subscription if exists
+        // Note: supabase channel IDs are the same objects returned from .channel().subscribe(); remove by reference
+      } catch (e) {
+        // ignore
+      }
     };
   }, [activeTab, activeDmUser, activeChannel]);
+
+  const toggleReaction = async (messageId: string, emoji: string) => {
+    if (!currentUser) return;
+    try {
+      // check if reaction exists
+      const { data: existing } = await supabase.from('reactions').select('id').match({ message_id: messageId, user_id: currentUser.id, emoji }).single();
+      if (existing && existing.id) {
+        const { error } = await supabase.from('reactions').delete().eq('id', existing.id);
+        if (error) console.error('Failed to remove reaction', error);
+      } else {
+        const { error } = await supabase.from('reactions').insert({ message_id: messageId, user_id: currentUser.id, emoji });
+        if (error) console.error('Failed to add reaction', error);
+      }
+    } catch (e) {
+      console.error('toggleReaction error', e);
+    }
+  };
+
+  // Typing indicator: emit on input changes with debounce
+  useEffect(() => {
+    let typingTimeout: any = null;
+    let stopTimeout: any = null;
+
+    const sendTyping = async (isTyping: boolean) => {
+      if (!currentUser || !currentTargetId) return;
+      try {
+        await supabase.from('typing_statuses').upsert({
+          channel_id: currentTargetId,
+          user_id: currentUser.id,
+          is_typing: isTyping,
+          updated_at: new Date().toISOString()
+        }, { onConflict: ['channel_id', 'user_id'] });
+      } catch (err) {
+        // ignore errors
+      }
+    };
+
+    const onChange = () => {
+      // user started typing
+      sendTyping(true);
+      if (typingTimeout) clearTimeout(typingTimeout);
+      typingTimeout = setTimeout(() => {
+        // if no input for 1500ms, mark stopped
+        sendTyping(false);
+      }, 1500);
+    };
+
+    // attach a local listener to capture inputText changes
+    // Note: inputText is controlled; watch it
+    if (inputText !== '') {
+      onChange();
+    } else {
+      // if cleared, ensure typing stopped
+      sendTyping(false);
+    }
+
+    return () => {
+      if (typingTimeout) clearTimeout(typingTimeout);
+      if (stopTimeout) clearTimeout(stopTimeout);
+    };
+  }, [inputText, currentUser, currentTargetId]);
 
   // Auto-scroll to bottom of messages
   const scrollToBottom = () => {
@@ -275,6 +444,33 @@ export default function ChatSection({ dmTargetName }: { dmTargetName?: string })
                   <span className="text-[10px] text-slate-500/80 px-1 font-mono tracking-tight">
                     {msg.timestamp}
                   </span>
+
+                  {/* Reactions Bar */}
+                  <div className="flex gap-2 mt-2 items-center">
+                    {/* existing reactions */}
+                    {msg.reactions && Object.entries(msg.reactions).map(([emoji, info]: any) => {
+                      const users: string[] = info.users || [];
+                      const count: number = info.count || 0;
+                      const me = currentUser ? users.includes(currentUser.id) : false;
+                      return (
+                        <button
+                          key={emoji}
+                          onClick={() => toggleReaction(msg.id, emoji)}
+                          className={`flex items-center gap-2 px-2 py-1 rounded-full text-sm ${me ? 'bg-teal-500 text-white' : 'bg-white/5 text-slate-200'}`}
+                        >
+                          <span>{emoji}</span>
+                          <span className="text-xs font-mono">{count}</span>
+                        </button>
+                      );
+                    })}
+
+                    {/* quick add emojis */}
+                    <div className="flex gap-1">
+                      {REACTION_EMOJIS.map(e => (
+                        <button key={e} onClick={() => toggleReaction(msg.id, e)} className="text-sm bg-transparent hover:bg-white/5 px-1 py-0.5 rounded">{e}</button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
 
                 {/* Avatar (Right-aligned messages only) */}
@@ -290,6 +486,20 @@ export default function ChatSection({ dmTargetName }: { dmTargetName?: string })
           })}
         </AnimatePresence>
         <div ref={messagesEndRef} />
+        {/* Typing indicator */}
+        {typingUsers.length > 0 && (
+          <div className="px-4 py-2 text-xs text-slate-400 flex items-center">
+            {(() => {
+              const others = typingUsers.filter(u => (currentUser ? u !== currentUser.id : true));
+              if (others.length === 0) return null;
+              const names = others
+                .map(id => participants.find(p => p.id === id)?.name || 'Someone')
+                .slice(0, 3);
+              const text = names.length === 1 ? `${names[0]} is typing...` : `${names.join(', ')} are typing...`;
+              return <span>{text}</span>;
+            })()}
+          </div>
+        )}
       </div>
 
       {/* Message Input Form */}

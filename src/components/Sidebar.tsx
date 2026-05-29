@@ -19,6 +19,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '@/lib/supabase';
 import WorkspaceSettingsModal from './WorkspaceSettingsModal';
 import InviteMemberModal from './InviteMemberModal';
+import OnlineCountBadge from './OnlineCountBadge';
 
 export default function Sidebar() {
   const { activeTab, setActiveTab, activeWorkspace, setActiveWorkspace, workspaces } = useAuraStore();
@@ -78,7 +79,11 @@ export default function Sidebar() {
                 <Layers className="w-5 h-5 text-white" />
               </div>
               <div>
-                <h1 className="text-sm font-bold text-white tracking-wide truncate max-w-[120px]">{currentWorkspace.name}</h1>
+                <div className="flex items-center gap-2">
+                  <h1 className="text-sm font-bold text-white tracking-wide truncate max-w-[120px]">{currentWorkspace.name}</h1>
+                  {/* Online count badge */}
+                  <OnlineCountBadge workspaceId={currentWorkspace.id} />
+                </div>
                 <p className="text-[10px] text-teal-400 font-semibold">{role.toUpperCase()}</p>
               </div>
             </div>
