@@ -150,8 +150,8 @@ export default function Sidebar() {
       </aside>
 
       <AnimatePresence>
-        {showSettings && <WorkspaceSettingsModal workspaceId={activeWorkspace} onClose={() => setShowSettings(false)} />}
-        {showInvite && <InviteMemberModal workspaceId={activeWorkspace} onClose={() => setShowInvite(false)} />}
+        {showSettings && activeWorkspace && <WorkspaceSettingsModal workspaceId={activeWorkspace} onClose={() => setShowSettings(false)} />}
+        {showInvite && activeWorkspace && <InviteMemberModal workspaceId={activeWorkspace} onClose={() => setShowInvite(false)} />}
       </AnimatePresence>
     </>
   );
