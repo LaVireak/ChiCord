@@ -64,7 +64,7 @@ export const useAuraStore = create<AuraState>((set) => ({
   isAuthenticated: false,
   activeWorkspace: null,
   workspaces: [],
-  activeTab: 'calls',
+  activeTab: 'home',
   activeChannel: 'ui-ux-design',
   activeDmUser: '3', // Marcus Chen
   activeFileId: null,
