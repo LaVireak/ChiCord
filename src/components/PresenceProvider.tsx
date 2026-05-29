@@ -22,7 +22,7 @@ export default function PresenceProvider() {
         user_id: userId,
         is_online: true,
         last_seen: new Date().toISOString()
-      }, { onConflict: ['workspace_id', 'user_id'] });
+      }, { onConflict: 'workspace_id,user_id' });
 
       // Heartbeat to keep last_seen updated
       heartbeatInterval = setInterval(async () => {
@@ -32,7 +32,7 @@ export default function PresenceProvider() {
             user_id: userId,
             is_online: true,
             last_seen: new Date().toISOString()
-          }, { onConflict: ['workspace_id', 'user_id'] });
+          }, { onConflict: 'workspace_id,user_id' });
         } catch (e) {
           // ignore
         }
@@ -58,7 +58,7 @@ export default function PresenceProvider() {
             user_id: userId,
             is_online: false,
             last_seen: new Date().toISOString()
-          }, { onConflict: ['workspace_id', 'user_id'] });
+          }, { onConflict: 'workspace_id,user_id' });
         } catch (e) {
           // ignore
         }

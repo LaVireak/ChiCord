@@ -263,20 +263,21 @@ export default function ChatSection({ dmTargetName }: { dmTargetName?: string })
       // Subscribe to reactions changes (global subscription, we'll filter locally)
       const reactionsSub = supabase
         .channel(`reactions:${targetId}:${Date.now()}`)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'reactions' }, async (payload) => {
-          const msgId = payload.new?.message_id || payload.old?.message_id;
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'reactions' }, async (payload: any) => {
+          const msgId = payload?.new?.message_id ?? payload?.old?.message_id;
           if (!msgId) return;
           // If this message is in our list, refetch reactions for it
-          setMessages(async (prev: any[]) => {
+          const { data: reacts } = await supabase
+            .from('reactions')
+            .select('id,message_id,user_id,emoji')
+            .eq('message_id', msgId);
+
+          const rmap = buildReactionsMap(reacts || []);
+
+          setMessages((prev: any[]) => {
             const has = prev.some(m => m.id === msgId);
             if (!has) return prev;
-            try {
-              const { data: reacts } = await supabase.from('reactions').select('id,message_id,user_id,emoji').eq('message_id', msgId);
-              const rmap = buildReactionsMap(reacts || []);
-              return prev.map(m => m.id === msgId ? { ...m, reactions: rmap[m.id] || {} } : m);
-            } catch (e) {
-              return prev;
-            }
+            return prev.map(m => m.id === msgId ? { ...m, reactions: rmap[m.id] || {} } : m);
           });
         })
         .subscribe();
@@ -331,7 +332,7 @@ export default function ChatSection({ dmTargetName }: { dmTargetName?: string })
           user_id: currentUser.id,
           is_typing: isTyping,
           updated_at: new Date().toISOString()
-        }, { onConflict: ['channel_id', 'user_id'] });
+        }, { onConflict: 'channel_id,user_id' });
       } catch (err) {
         // ignore errors
       }
