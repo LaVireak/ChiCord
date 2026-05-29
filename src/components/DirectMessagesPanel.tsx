@@ -1,20 +1,31 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { useAuraStore } from '@/store/useAuraStore';
 import ChatSection from './ChatSection';
 import { Phone, Video, Info } from 'lucide-react';
 
 export default function DirectMessagesPanel() {
-  const { activeDmUser, participants } = useAuraStore();
-  
-  // Extended contact list (same as RightSidebar)
-  const otherMembers = [
-    { id: '5', name: 'Elena Rostova', avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150', status: 'Idle' as const },
-    { id: '6', name: 'Liam Gallagher', avatar: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=150', status: 'Muted' as const },
-  ];
-  const allContacts = [...participants, ...otherMembers];
-  const user = allContacts.find(p => p.id === activeDmUser);
+  const { activeDmUser } = useAuraStore();
+  const [user, setUser] = useState<any>(null);
+
+  React.useEffect(() => {
+    if (!activeDmUser) return;
+    const fetchUser = async () => {
+      const { data } = await import('@/lib/supabase').then(m => 
+        m.supabase.from('profiles').select('*').eq('id', activeDmUser).single()
+      );
+      if (data) {
+        setUser({
+          id: data.id,
+          name: data.full_name,
+          avatar: data.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(data.full_name)}&background=6366f1&color=fff`,
+          status: 'Online'
+        });
+      }
+    };
+    fetchUser();
+  }, [activeDmUser]);
 
   if (!user) {
     return (

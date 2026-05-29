@@ -7,19 +7,38 @@ import RightSidebar from '@/components/RightSidebar';
 import WorkspaceSelector from '@/components/WorkspaceSelector';
 import AuthPage from '@/components/AuthPage';
 import { useAuraStore } from '@/store/useAuraStore';
+import { supabase } from '@/lib/supabase';
 
 export default function Home() {
   const [mounted, setMounted] = useState(false);
-  const { isAuthenticated, activeWorkspace } = useAuraStore();
+  const [authChecking, setAuthChecking] = useState(true);
+  const { isAuthenticated, setIsAuthenticated, activeWorkspace } = useAuraStore();
 
   useEffect(() => {
     setMounted(true);
-  }, []);
 
-  if (!mounted) {
+    const checkSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      setIsAuthenticated(!!session);
+      setAuthChecking(false);
+    };
+    
+    checkSession();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      setIsAuthenticated(!!session);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [setIsAuthenticated]);
+
+  if (!mounted || authChecking) {
     return (
-      <div className="relative w-screen h-screen bg-slate-950" suppressHydrationWarning>
+      <div className="relative w-screen h-screen bg-slate-950 flex items-center justify-center" suppressHydrationWarning>
         <div className="mesh-bg" suppressHydrationWarning />
+        <div className="z-10 text-white animate-pulse font-medium tracking-widest text-sm uppercase">Loading Aura...</div>
       </div>
     );
   }

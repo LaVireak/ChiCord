@@ -35,7 +35,7 @@ interface AuraState {
   activeWorkspace: string | null;
   workspaces: WorkspaceData[];
   activeTab: 'home' | 'direct' | 'channels' | 'files' | 'calls';
-  activeChannel: 'general' | 'ui-ux-design' | 'prototyping';
+  activeChannel: string;
   activeDmUser: string;
   activeFileId: string | null;
   inCall: boolean;
@@ -49,7 +49,7 @@ interface AuraState {
   setActiveWorkspace: (workspaceId: string | null) => void;
   addWorkspace: (workspace: WorkspaceData) => void;
   setActiveTab: (tab: 'home' | 'direct' | 'channels' | 'files' | 'calls') => void;
-  setActiveChannel: (channel: 'general' | 'ui-ux-design' | 'prototyping') => void;
+  setActiveChannel: (channel: string) => void;
   setActiveDmUser: (userId: string) => void;
   setActiveFileId: (fileId: string | null) => void;
   toggleMic: () => void;

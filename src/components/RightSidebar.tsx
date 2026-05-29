@@ -3,8 +3,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAuraStore } from '@/store/useAuraStore';
 import { Mic, MicOff, Monitor, Radio, Users2, MessageSquare, FileText, Download, Share2, Link, File, Circle } from 'lucide-react';
-import { mockFiles } from './FilesPanel';
 import { supabase } from '@/lib/supabase';
+import { getIconComponent } from './FilesPanel';
 
 interface ProfileMember {
   id: string;
@@ -14,42 +14,50 @@ interface ProfileMember {
 }
 
 export default function RightSidebar() {
-  const { participants, inCall, activeTab, activeDmUser, setActiveDmUser, setActiveTab, activeFileId } = useAuraStore();
+  const { inCall, activeTab, activeDmUser, setActiveDmUser, setActiveTab, activeFileId } = useAuraStore();
   const [members, setMembers] = useState<ProfileMember[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [activeFile, setActiveFile] = useState<any>(null);
 
   useEffect(() => {
     const fetchMembers = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session) setCurrentUserId(session.user.id);
 
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('id, full_name, avatar_url');
-      
-      if (data) {
-        setMembers(data.map(p => ({ ...p, isOnline: true })));
-      }
+      const { data } = await supabase.from('profiles').select('id, full_name, avatar_url');
+      if (data) setMembers(data.map(p => ({ ...p, isOnline: true })));
     };
 
     fetchMembers();
 
-    // Subscribe to profile changes (new users joining)
-    const sub = supabase
-      .channel('public:profiles')
+    const sub = supabase.channel('public:profiles')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => {
         fetchMembers();
-      })
-      .subscribe();
+      }).subscribe();
 
     return () => { supabase.removeChannel(sub); };
   }, []);
 
-  // Split into self and others
+  // Fetch active file details
+  useEffect(() => {
+    if (!activeFileId) {
+      setActiveFile(null);
+      return;
+    }
+    const fetchFile = async () => {
+      const { data } = await supabase.from('files').select(`
+        *,
+        uploader:profiles!uploader_id(full_name)
+      `).eq('id', activeFileId).single();
+      
+      if (data) setActiveFile(data);
+    };
+    fetchFile();
+  }, [activeFileId]);
+
   const self = members.find(m => m.id === currentUserId);
   const otherMembers = members.filter(m => m.id !== currentUserId);
 
-  // If in call, generate the participant list using real members
   const callList = inCall ? [
     ...(self ? [{ id: self.id, name: self.full_name, avatar: self.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(self.full_name)}&background=14b8a6&color=fff`, status: 'Idle', isSelf: true }] : []),
     ...otherMembers.slice(0, 3).map((m, idx) => ({
@@ -61,29 +69,26 @@ export default function RightSidebar() {
     }))
   ] : [];
 
-  const activeFile = activeFileId ? mockFiles.find(f => f.id === activeFileId) : null;
-
-  // Build DM contacts: all profiles except self
   const dmContacts = otherMembers;
+
+  const FileIcon = activeFile ? getIconComponent(activeFile.icon_name) : null;
 
   return (
     <aside className="w-80 h-full liquid-glass flex flex-col justify-between p-6 shrink-0 relative overflow-hidden">
-      {/* Ambient glow */}
       <div className="absolute -bottom-24 -right-24 w-48 h-48 rounded-full bg-purple-500/10 blur-3xl pointer-events-none" />
 
       <div className="flex flex-col gap-6 z-10 overflow-hidden h-full justify-start">
 
         {activeTab === 'files' ? (
-          /* ─── File Inspector ─── */
           <div className="flex flex-col h-full">
             <h3 className="text-sm font-semibold tracking-wide text-white uppercase flex items-center gap-2 mb-4">
               <FileText className="w-4 h-4 text-amber-400" />
               <span>File Details</span>
             </h3>
-            {activeFile ? (
+            {activeFile && FileIcon ? (
               <div className="flex flex-col gap-6">
-                <div className={`w-full aspect-square rounded-2xl flex items-center justify-center border border-white/5 ${activeFile.bg}`}>
-                  <activeFile.icon className={`w-24 h-24 ${activeFile.color}`} />
+                <div className={`w-full aspect-square rounded-2xl flex items-center justify-center border border-white/5 ${activeFile.bg_color}`}>
+                  <FileIcon className={`w-24 h-24 ${activeFile.icon_color}`} />
                 </div>
                 <div>
                   <h2 className="text-lg font-bold text-white mb-1 break-words">{activeFile.name}</h2>
@@ -92,11 +97,11 @@ export default function RightSidebar() {
                 <div className="flex flex-col gap-3 py-4 border-y border-white/5">
                   <div className="flex justify-between items-center text-sm">
                     <span className="text-slate-500">Uploaded by</span>
-                    <span className="text-slate-200 font-medium">{activeFile.uploader}</span>
+                    <span className="text-slate-200 font-medium">{activeFile.uploader?.full_name || 'Unknown'}</span>
                   </div>
                   <div className="flex justify-between items-center text-sm">
                     <span className="text-slate-500">Date modified</span>
-                    <span className="text-slate-200 font-medium">{activeFile.date}</span>
+                    <span className="text-slate-200 font-medium">{new Date(activeFile.created_at).toLocaleDateString()}</span>
                   </div>
                 </div>
                 <div className="flex flex-col gap-3">
@@ -122,7 +127,6 @@ export default function RightSidebar() {
           </div>
 
         ) : activeTab === 'direct' ? (
-          /* ─── DM Contacts (dynamic) ─── */
           <div className="flex flex-col h-full overflow-hidden">
             <h3 className="text-sm font-semibold tracking-wide text-white uppercase flex items-center gap-2 mb-4">
               <MessageSquare className="w-4 h-4 text-indigo-400" />
@@ -130,7 +134,7 @@ export default function RightSidebar() {
             </h3>
             <div className="flex flex-col gap-2 overflow-y-auto pr-1 pb-4 custom-scrollbar">
               {dmContacts.length === 0 ? (
-                <p className="text-xs text-slate-500 text-center mt-4">No other users yet. Invite your friends!</p>
+                <p className="text-xs text-slate-500 text-center mt-4">No other users yet.</p>
               ) : (
                 dmContacts.map((contact) => {
                   const isActiveDm = activeDmUser === contact.id;
@@ -166,9 +170,7 @@ export default function RightSidebar() {
           </div>
 
         ) : (
-          /* ─── In-Call + Members View ─── */
           <>
-            {/* In-Call section */}
             <div>
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-semibold tracking-wide text-white uppercase flex items-center gap-2">
@@ -230,13 +232,11 @@ export default function RightSidebar() {
               )}
             </div>
 
-            {/* Workspace Members section (dynamic from Supabase) */}
             <div className="border-t border-white/5 pt-6 flex-1 flex flex-col overflow-hidden">
               <h4 className="text-[11px] font-bold tracking-wider text-slate-400 uppercase mb-4">
                 Workspace Members ({members.length})
               </h4>
               <div className="flex flex-col gap-3 overflow-y-auto pr-1 custom-scrollbar">
-                {/* Yourself first */}
                 {self && (
                   <div className="flex items-center gap-3 p-2 rounded-lg bg-white/5">
                     <div className="relative">
@@ -254,7 +254,6 @@ export default function RightSidebar() {
                   </div>
                 )}
 
-                {/* Other members */}
                 {otherMembers.length === 0 && !self && (
                   <p className="text-xs text-slate-500 text-center mt-2">No members yet.</p>
                 )}

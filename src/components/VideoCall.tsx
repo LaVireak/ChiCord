@@ -24,7 +24,6 @@ export default function VideoCall() {
     toggleVideo, 
     toggleScreenShare,
     setInCall,
-    participants
   } = useAuraStore();
 
   const [seconds, setSeconds] = useState(0);
@@ -43,9 +42,48 @@ export default function VideoCall() {
     return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
   };
 
+  const [speaker, setSpeaker] = useState<{name: string, avatar: string, id: string | null}>({ name: 'Waiting for others...', avatar: '', id: null });
+  const [currentUser, setCurrentUser] = useState<{name: string, avatar: string, id: string | null}>({ name: 'You', avatar: '', id: null });
+  const [loading, setLoading] = useState(true);
+  const { activeWorkspace } = useAuraStore();
+  
+  useEffect(() => {
+    const fetchUsers = async () => {
+      const { data: { session } } = await import('@/lib/supabase').then(m => m.supabase.auth.getSession());
+      
+      // Fetch the logged in user
+      if (session?.user.id) {
+        const { data: selfData } = await import('@/lib/supabase').then(m => 
+          m.supabase.from('profiles').select('*').eq('id', session.user.id).single()
+        );
+        if (selfData) {
+          setCurrentUser({
+            id: selfData.id,
+            name: selfData.full_name,
+            avatar: selfData.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(selfData.full_name)}&background=6366f1&color=fff`
+          });
+        }
+      }
+
+      // Fetch a random other user from the DB to act as the main speaker
+      const { data } = await import('@/lib/supabase').then(m => 
+        m.supabase.from('profiles').select('*').neq('id', session?.user.id).limit(1).single()
+      );
+      if (data) {
+        setSpeaker({ 
+          id: data.id,
+          name: data.full_name, 
+          avatar: data.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(data.full_name)}&background=14b8a6&color=fff`
+        });
+      }
+      setLoading(false);
+    };
+    if (inCall) fetchUsers();
+  }, [inCall]);
+
   if (!inCall) {
     return (
-      <div className="h-64 rounded-2xl liquid-glass-card flex flex-col items-center justify-center gap-4 text-center p-6 border border-dashed border-white/10">
+      <div className="h-64 rounded-2xl liquid-glass-card flex flex-col items-center justify-center gap-4 text-center p-6 border border-dashed border-white/10 mb-6">
         <div>
           <h3 className="text-slate-200 font-medium">You left the call</h3>
           <p className="text-slate-400 text-xs mt-1">Rejoin to speak with the engineering team.</p>
@@ -60,25 +98,50 @@ export default function VideoCall() {
     );
   }
 
-  // Sarah Jenkins (first participant)
-  const sarah = participants.find(p => p.id === '1') || { name: 'Sarah Jenkins', avatar: '', status: 'Speaking...' };
+  // If we are in the call but no one else is in the workspace
+  if (!loading && !speaker.id) {
+    return (
+      <div className="h-80 rounded-2xl liquid-glass-card flex flex-col items-center justify-center gap-4 text-center p-6 border border-dashed border-white/10 mb-6 relative overflow-hidden">
+        <div className="absolute inset-0 bg-teal-500/5 blur-3xl pointer-events-none" />
+        <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center border border-white/10 animate-pulse relative z-10">
+           <Video className="w-6 h-6 text-slate-500" />
+        </div>
+        <div className="relative z-10">
+          <h3 className="text-slate-200 font-medium">Waiting for others to join...</h3>
+          <p className="text-slate-400 text-xs mt-1">You're the only one in the call right now.</p>
+        </div>
+        <button
+          onClick={() => setInCall(false)}
+          className="relative z-10 px-5 py-2.5 bg-rose-500 hover:bg-rose-600 text-white rounded-xl text-xs font-semibold shadow-lg shadow-rose-500/20 transition-all duration-300 mt-2"
+        >
+          Leave Call
+        </button>
+      </div>
+    );
+  }
 
   return (
     <section className="relative w-full h-80 rounded-2xl overflow-hidden shadow-2xl border border-white/10 group mb-6">
-      {/* Sarah's Main Video Stream (Background) */}
-      <div className="absolute inset-0 bg-slate-950">
-        <img 
-          src="https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=800" 
-          alt="Sarah Jenkins video feed" 
-          className="w-full h-full object-cover opacity-85 saturate-[1.1]"
+      {/* Main Stream (Background) using dynamic user avatar */}
+      <div className="absolute inset-0 bg-slate-950 flex flex-col items-center justify-center overflow-hidden">
+        {/* Blurry, zoomed in background of the avatar */}
+        <div 
+          className="absolute inset-0 bg-cover bg-center blur-2xl opacity-40 saturate-[1.2] scale-110" 
+          style={{ backgroundImage: `url(${speaker.avatar})` }} 
         />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30 pointer-events-none" />
+        {/* Clear center avatar profile */}
+        <img 
+          src={speaker.avatar} 
+          alt={speaker.name} 
+          className="w-32 h-32 rounded-full border-4 border-white/10 shadow-2xl relative z-10"
+        />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30 pointer-events-none z-10" />
       </div>
 
       {/* Participant Name Badge, Live Wave Indicator & Call Timer */}
       <div className="absolute top-4 left-4 flex items-center gap-2.5 bg-black/40 backdrop-blur-md px-3.5 py-1.5 rounded-xl border border-white/10 z-20">
         <div className="w-2.5 h-2.5 rounded-full bg-teal-400 animate-pulse shadow-sm shadow-teal-400/80" />
-        <span className="text-xs font-semibold text-white">{sarah.name}</span>
+        <span className="text-xs font-semibold text-white">{speaker.name}</span>
         
         {/* Glowing audio waveform indicator */}
         <div className="flex gap-[3px] items-end h-3 ml-1.5">
@@ -94,14 +157,18 @@ export default function VideoCall() {
       {/* Floating Picture-in-Picture: You */}
       <div className="absolute top-4 right-4 w-32 h-44 rounded-xl overflow-hidden border border-white/15 shadow-2xl z-20 transition-all duration-300 bg-slate-900/90 backdrop-blur-md">
         {videoActive ? (
-          <>
-            <img 
-              src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300" 
-              alt="Your video feed" 
-              className="w-full h-full object-cover"
+          <div className="absolute inset-0 bg-slate-950 flex flex-col items-center justify-center overflow-hidden">
+            <div 
+              className="absolute inset-0 bg-cover bg-center blur-xl opacity-40 saturate-[1.2] scale-110" 
+              style={{ backgroundImage: `url(${currentUser.avatar})` }} 
             />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent pointer-events-none" />
-          </>
+            <img 
+              src={currentUser.avatar} 
+              alt="You" 
+              className="w-16 h-16 rounded-full border-2 border-white/10 shadow-2xl relative z-10"
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent pointer-events-none z-10" />
+          </div>
         ) : (
           <div className="w-full h-full flex flex-col items-center justify-center bg-slate-950/80">
             <div className="w-12 h-12 rounded-full border border-white/10 bg-white/5 flex items-center justify-center mb-2 shadow-inner">
@@ -110,7 +177,7 @@ export default function VideoCall() {
             <span className="text-[10px] font-semibold tracking-wide text-slate-500 uppercase">Camera Off</span>
           </div>
         )}
-        <div className="absolute bottom-2.5 left-2.5 flex items-center gap-1.5 bg-black/50 backdrop-blur-sm px-2 py-0.5 rounded-lg border border-white/5">
+        <div className="absolute bottom-2.5 left-2.5 flex items-center gap-1.5 bg-black/50 backdrop-blur-sm px-2 py-0.5 rounded-lg border border-white/5 z-20">
           <span className="text-[10px] font-medium text-slate-200">You</span>
           {!micActive && <MicOff className="w-2.5 h-2.5 text-rose-500" />}
         </div>

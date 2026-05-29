@@ -4,22 +4,35 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useAuraStore } from '@/store/useAuraStore';
 import { Search, Filter, Upload, FileText, Image as ImageIcon, File, FolderArchive, MoreVertical, X, Trash2, Pencil, ChevronDown, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { supabase } from '@/lib/supabase';
 
-export const mockFiles = [
-  { id: 'f1', name: 'Homepage_V2.fig', type: 'figma', size: '24 MB', uploader: 'Sarah Jenkins', date: 'Today, 10:42 AM', icon: ImageIcon, color: 'text-purple-400', bg: 'bg-purple-500/10' },
-  { id: 'f2', name: 'Q3_Roadmap.pdf', type: 'document', size: '2.1 MB', uploader: 'Elena Rostova', date: 'Yesterday', icon: FileText, color: 'text-rose-400', bg: 'bg-rose-500/10' },
-  { id: 'f3', name: 'Logo_Assets.zip', type: 'archive', size: '156 MB', uploader: 'You', date: 'Oct 12', icon: FolderArchive, color: 'text-amber-400', bg: 'bg-amber-500/10' },
-  { id: 'f4', name: 'API_Specs_v4.md', type: 'document', size: '45 KB', uploader: 'Marcus Chen', date: 'Oct 10', icon: FileText, color: 'text-teal-400', bg: 'bg-teal-500/10' },
-  { id: 'f5', name: 'App_Icon_Final.png', type: 'image', size: '4.5 MB', uploader: 'Sarah Jenkins', date: 'Oct 09', icon: ImageIcon, color: 'text-indigo-400', bg: 'bg-indigo-500/10' },
-  { id: 'f6', name: 'Onboarding_Flow.fig', type: 'figma', size: '42 MB', uploader: 'Aria Stark', date: 'Oct 05', icon: ImageIcon, color: 'text-purple-400', bg: 'bg-purple-500/10' },
-];
+export const getIconComponent = (iconName: string) => {
+  switch (iconName) {
+    case 'ImageIcon': return ImageIcon;
+    case 'FolderArchive': return FolderArchive;
+    default: return FileText;
+  }
+};
+
+export interface FileData {
+  id: string;
+  workspace_id: string;
+  uploader_id: string;
+  name: string;
+  type: string;
+  size: string;
+  icon_name: string;
+  icon_color: string;
+  bg_color: string;
+  created_at: string;
+}
 
 const FILE_TYPES = ['All', 'figma', 'document', 'image', 'archive'];
 
 export default function FilesPanel() {
-  const { activeFileId, setActiveFileId } = useAuraStore();
+  const { activeFileId, setActiveFileId, activeWorkspace } = useAuraStore();
   const [search, setSearch] = useState('');
-  const [files, setFiles] = useState(mockFiles);
+  const [files, setFiles] = useState<FileData[]>([]);
   const [activeFilter, setActiveFilter] = useState('All');
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
@@ -28,7 +41,28 @@ export default function FilesPanel() {
   const filterRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Close menus on outside click
+  useEffect(() => {
+    if (!activeWorkspace) return;
+    const fetchFiles = async () => {
+      const { data } = await supabase.from('files').select('*').eq('workspace_id', activeWorkspace).order('created_at', { ascending: false });
+      if (data) setFiles(data);
+    };
+    fetchFiles();
+
+    const sub = supabase.channel(`public:files:${activeWorkspace}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'files', filter: `workspace_id=eq.${activeWorkspace}` }, (payload) => {
+        if (payload.eventType === 'INSERT') {
+          setFiles(prev => [payload.new as FileData, ...prev]);
+        } else if (payload.eventType === 'DELETE') {
+          setFiles(prev => prev.filter(f => f.id !== payload.old.id));
+        } else if (payload.eventType === 'UPDATE') {
+          setFiles(prev => prev.map(f => f.id === payload.new.id ? (payload.new as FileData) : f));
+        }
+      }).subscribe();
+      
+    return () => { supabase.removeChannel(sub); };
+  }, [activeWorkspace]);
+
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (filterRef.current && !filterRef.current.contains(e.target as Node)) setShowFilterMenu(false);
@@ -44,10 +78,11 @@ export default function FilesPanel() {
     return matchesSearch && matchesType;
   });
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     setFiles(prev => prev.filter(f => f.id !== id));
     if (activeFileId === id) setActiveFileId(null);
     setMenuOpenId(null);
+    await supabase.from('files').delete().eq('id', id);
   };
 
   const startRename = (id: string, currentName: string) => {
@@ -56,17 +91,49 @@ export default function FilesPanel() {
     setMenuOpenId(null);
   };
 
-  const commitRename = (id: string) => {
+  const commitRename = async (id: string) => {
     if (renameValue.trim()) {
       setFiles(prev => prev.map(f => f.id === id ? { ...f, name: renameValue.trim() } : f));
+      await supabase.from('files').update({ name: renameValue.trim() }).eq('id', id);
     }
     setRenamingId(null);
   };
 
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && activeWorkspace) {
+      const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+      const type = ['fig'].includes(ext) ? 'figma' : ['pdf','md','txt'].includes(ext) ? 'document' : ['png','jpg','jpeg','gif','webp'].includes(ext) ? 'image' : ['zip','rar','7z'].includes(ext) ? 'archive' : 'document';
+      const icon_name = type === 'image' ? 'ImageIcon' : type === 'archive' ? 'FolderArchive' : 'FileText';
+      const colorMap: Record<string, { color: string; bg: string }> = {
+        figma: { color: 'text-purple-400', bg: 'bg-purple-500/10' },
+        document: { color: 'text-teal-400', bg: 'bg-teal-500/10' },
+        image: { color: 'text-indigo-400', bg: 'bg-indigo-500/10' },
+        archive: { color: 'text-amber-400', bg: 'bg-amber-500/10' },
+      };
+      const style = colorMap[type] || colorMap.document;
+      const sizeStr = file.size > 1_000_000 ? `${(file.size / 1_000_000).toFixed(1)} MB` : `${Math.round(file.size / 1000)} KB`;
+      
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      const newFile = {
+        workspace_id: activeWorkspace,
+        uploader_id: session?.user.id,
+        name: file.name,
+        type,
+        size: sizeStr,
+        icon_name,
+        icon_color: style.color,
+        bg_color: style.bg
+      };
+      
+      await supabase.from('files').insert([newFile]);
+      e.target.value = '';
+    }
+  };
+
   return (
     <div className="flex-1 flex flex-col h-full min-h-0 z-10 relative">
-      
-      {/* Header */}
       <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/5 pb-5 mb-5 shrink-0">
         <div>
           <h1 className="text-xl font-bold text-white tracking-wide">Workspace Files</h1>
@@ -74,7 +141,6 @@ export default function FilesPanel() {
         </div>
         
         <div className="flex items-center gap-3">
-          {/* Search */}
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input 
@@ -86,7 +152,6 @@ export default function FilesPanel() {
             />
           </div>
 
-          {/* Filter Dropdown */}
           <div className="relative" ref={filterRef}>
             <button 
               onClick={() => setShowFilterMenu(v => !v)}
@@ -126,37 +191,11 @@ export default function FilesPanel() {
             </AnimatePresence>
           </div>
 
-          {/* Upload */}
           <label className="flex items-center gap-2 px-4 py-2 bg-teal-500 hover:bg-teal-400 text-white rounded-xl text-sm font-semibold transition-all shadow-lg shadow-teal-500/20 cursor-pointer">
             <input 
               type="file" 
               className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) {
-                  const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
-                  const type = ['fig'].includes(ext) ? 'figma' : ['pdf','md','txt'].includes(ext) ? 'document' : ['png','jpg','jpeg','gif','webp'].includes(ext) ? 'image' : ['zip','rar','7z'].includes(ext) ? 'archive' : 'document';
-                  const IconComp = type === 'image' ? ImageIcon : type === 'archive' ? FolderArchive : FileText;
-                  const colorMap: Record<string, { color: string; bg: string }> = {
-                    figma: { color: 'text-purple-400', bg: 'bg-purple-500/10' },
-                    document: { color: 'text-teal-400', bg: 'bg-teal-500/10' },
-                    image: { color: 'text-indigo-400', bg: 'bg-indigo-500/10' },
-                    archive: { color: 'text-amber-400', bg: 'bg-amber-500/10' },
-                  };
-                  const style = colorMap[type] || colorMap.document;
-                  setFiles(prev => [{
-                    id: `f_${Date.now()}`,
-                    name: file.name,
-                    type,
-                    size: file.size > 1_000_000 ? `${(file.size / 1_000_000).toFixed(1)} MB` : `${Math.round(file.size / 1000)} KB`,
-                    uploader: 'You',
-                    date: 'Just now',
-                    icon: IconComp,
-                    ...style,
-                  }, ...prev]);
-                  e.target.value = '';
-                }
-              }}
+              onChange={handleUpload}
             />
             <Search className="w-4 h-4 hidden" />
             <span>Upload</span>
@@ -164,12 +203,11 @@ export default function FilesPanel() {
         </div>
       </header>
 
-      {/* Files Grid */}
       <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
         {filtered.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 pb-6">
             {filtered.map((file, idx) => {
-              const Icon = file.icon;
+              const Icon = getIconComponent(file.icon_name);
               const isSelected = activeFileId === file.id;
               const isMenuOpen = menuOpenId === file.id;
               const isRenaming = renamingId === file.id;
@@ -192,10 +230,9 @@ export default function FilesPanel() {
                   }`}
                 >
                   <div className="flex justify-between items-start mb-6">
-                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${file.bg}`}>
-                      <Icon className={`w-6 h-6 ${file.color}`} />
+                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${file.bg_color}`}>
+                      <Icon className={`w-6 h-6 ${file.icon_color}`} />
                     </div>
-                    {/* ••• Menu */}
                     <div className="relative" ref={isMenuOpen ? menuRef : null}>
                       <button 
                         onClick={(e) => { e.stopPropagation(); setMenuOpenId(isMenuOpen ? null : file.id); }}
@@ -249,7 +286,7 @@ export default function FilesPanel() {
                     )}
                     <div className="flex items-center justify-between mt-1 text-xs text-slate-500">
                       <span>{file.size}</span>
-                      <span>{file.date}</span>
+                      <span>{new Date(file.created_at).toLocaleDateString()}</span>
                     </div>
                   </div>
 
@@ -266,7 +303,7 @@ export default function FilesPanel() {
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-slate-500 space-y-3">
             <File className="w-12 h-12 opacity-50" />
-            <p>No files match your search.</p>
+            <p>No files exist in this workspace yet.</p>
           </div>
         )}
       </div>
